@@ -1,0 +1,1369 @@
+﻿待解决事件：
+1.AudioALSAPlaybackHandlerNormal.cpp中 setScreenState(bool mode, size_t buffer_size, size_t reduceInterruptSize, bool bforce __unused)
+	-->>mHardwareResourceManager->setInterruptRate(mStreamAttributeSource->mAudioOutputFlags, rate);
+	设置中断频率
+	当mStreamAttributeSource->mAudioOutputFlags & AUDIO_OUTPUT_FLAG_FAST不设置。
+为什么在AUDIO_OUTPUT_FLAG_FAST时设置中断频率会导致声音异常？
+
+2.AudioFlinger::PlaybackThread::threadLoop()：
+	processConfigEvents_l();：event从哪里来，怎么处理？
+今日笔记：
+mTimestamp用来描述server跟client间的共享buffer读写指针位置，并记录了读写时间。
+其中ExtendedTimestamp::LOCATION_SERVER作为mTimestamp读写的索引。
+mFramesWritten：当前消耗到的位置
+lastFramesWritten：上一次写到的位置
+
+EARPIECE
+Engine::getDeviceForStrategy
+AudioALSAPlaybackHandlerNormal::setScreenState
+mEngine->getStrategyForStream
+ Engine::getDeviceForStrategy
+AudioPolicyManager::getOutputForDevice
+openOutput
+AudioPolicyService::AudioPolicyClient::openOutput
+AudioHwDevice：：openOutputStream
+AudioStreamOut::outputStream
+AudioStreamOut::open(
+AudioHwDevice::hwDevice()->open_output_stream()
+audio_hw_device_t->open_output_stream()
+AudioSystem::startOutputSampleRate
+AudioPolicyService:: startOutputSampleRate
+AudioPolicyManager::startOutputSampleRate
+AudioPolicyManager::startOutput
+	AudioPolicyManager::getNewOutputDevice
+	AudioPolicyManager::startSource
+		AudioPolicyManager::setOutputDevice
+		AudioPolicyManager::checkAndSetVolume
+
+AudioPolicyManager::applyStreamVolumes
+AudioPolicyManager::checkDeviceMuteStrategies
+AudioPolicyManager::createAudioPatch
+AudioPolicyService::AudioPolicyClient::setParameters
+checkAndSetVolume
+AudioALSAHardwareResourceManager: -startOutputDevice()
+
+echo Setanareg,regaddr,0x54,regvalue,0x8004 > /sys/kernel/debug/mtksocaudio
+ #define SPK_CON1 (PMIC_REG_BASE + 0x054) 
+Class D L-ch PWM polarity flag with deglitch
+
+SPK_OFFSET_L overflow
+
+正常： 
+                
+异常：
+
+pr_debug("AFUNC_AUD_CON4	= 0x%x\n", Ana_Get_Reg(AFUNC_AUD_CON4));
+pr_debug("AFUNC_AUD_CON3	= 0x%x\n", Ana_Get_Reg(AFUNC_AUD_CON3));
+
+prepareTracks_l
+setParameter
+invalidateState
+track__16BitsStereo
+
+
+mStartOutputDevicesCount
+
+AudioALSACodecDeviceOutEarphonePMIC::DeviceDoDcCalibrate()
+
+01-01 00:12:05.398354   268   468 D AudioALSAHardwareResourceManager: +startOutputDevice(), new_devices = 0x2, mOutputDevices = 0x0, mStartOutputDevicesCount = 0 SampleRate = 44100
+01-01 00:12:05.447592   268   468 D AudioALSAHardwareResourceManager: -startOutputDevice(), mOutputDevices = 0x2, mStartOutputDevicesCount = 1
+这是客户出现问题时的log，请问这样是否可以说明耳机喇叭不在一个通路上
+count这里值为1
+看里面，OpenSpeakerpath调用了哪些控件是否有调用耳机的控件
+
+抓取三种情况log及寄存器:
+1.正常喇叭播放
+2.插上耳机播放
+3.拔下耳机出现问题
+建议先抓取一份，观察trace有没有添加成功！
+
+/kernel-3.18/sound/soc/mediatek/mt_soc_audio_6580/AudDrv_Ana.c
+
+void Ana_Set_Reg(uint32 offset, uint32 value, uint32 mask)
+{
+#ifdef AUDIO_USING_WRAP_DRIVER
+    	/* set pmic register or analog CONTROL_IFACE_PATH */
++	pr_debug("Begin Ana_Set_Reg  mask = 0x%x offset = %d value = 0x%x\n", mask, offset,value);
+	int ret = 0;
+	uint32 Reg_Value;
+	unsigned long flags = 0;
+
+	PRINTK_ANA_REG("Ana_Set_Reg offset= 0x%x , value = 0x%x mask = 0x%x\n", offset,
+			value, mask);
+
+	spin_lock_irqsave(&ana_set_reg_lock, flags);
+	Reg_Value = Ana_Get_Reg(offset);
+	Reg_Value &= (~mask);
+	Reg_Value |= (value & mask);
+	ret = pwrap_write(offset, Reg_Value);
+	spin_unlock_irqrestore(&ana_set_reg_lock, flags);
+
+	Reg_Value = Ana_Get_Reg(offset);
+	if ((Reg_Value & mask) != (value & mask))
+		pr_debug("Ana_Set_Reg  mask = 0x%x ret = %d Reg_Value = 0x%x\n", mask, ret,
+			 Reg_Value);
++	pr_debug("After Ana_Set_Reg  mask = 0x%x offset = %d Reg_Value = 0x%x\n", mask, offset,Reg_Value);
+#endif
+}
+
+打log用printk()
+
+
+SetHplTrimOffset(int Offset)
+    -->setHpDcCalibration
+	-->setHpDcCalibration()
+setHpDcCalibration
+Ana_Set_Reg(ABB_AFE_CON3, mHpLeftDcCalibration, 0xffff);
+Audio_Hpl_Offset_Set
+ AudioALSACodecDeviceOutEarphonePMIC::DeviceDoDcCalibrate()
+/kernel-3.18/sound/soc/mediatek/mt6580/mt_soc_codec_63xx.c
+/vendor/mediatek/proprietary/hardware/audio/common/V3/aud_drv/AudioALSACodecDeviceOutEarphonePMIC.cpp
+
+
+
+
+
+
+
+
+
+
+AudioPolicyManagerCustomImpl: checkAndSetVolume stream = 3 index = 15 mId = 3 device = 0x2(0x2) delayMs = 500 force = 1 [-1/0x0/-1]
+AudioALSAVolumeController: SetSpeakerGain(), index = 15, SetRealLSpeakerGain = 5
+
+
+[11/23/2017 4:19 PM] Anni Fu (符安妮): 
+01-02 00:56:54.092777   292   619 D AudioALSAHardware: FM index 15
+01-02 00:56:54.092828   292   619 D AudioALSAHardware: Final fFMVolume 0.707946
+01-02 00:56:54.092861   292   619 D AudioALSAHardware: fFMVolume 0.707946
+01-02 00:56:54.092929   292   619 D AudioALSAFMController: +setFmVolume(), mFmVolume = 0.000000 => fm_volume = 0.707946
+01-02 00:56:54.092995   292   619 D AudioALSAHardwareResourceManager: setHWGain2DigitalGain(), gain = 0x5a9df
+ALPS03373469 [[TCL][FM]FM信号幅度调整]
+
+37,53,35,80,2601，6570较老的平台用的是.h参数架构
+55,57,97,99,63,58,39等新平台都是xml架构的
+ALPS03373469 FM信号幅度调整
+
+
+修改模拟增益
+ApplyAmpGain
+ApplyAudioGain
+setFmVolume
+ /vendor/mediatek/proprietary/hardware/audio/mt6580/aud_drv/AudioALSAVolumeController.cpp
+
+1364void AudioALSAVolumeController::ApplyAmpGain(int Gain, uint32_t mode, uint32_t device) {
+1365    ALOGD("ApplyAmpGain  Gain = %d mode= %d device = %d", Gain, mode, device);
+1366    if (device >= Num_of_Audio_gain) {
+1367        ALOGW(" Calgain out of boundary mode = %d device = 0x%x", mode, device);
+1368        return;
+1369    }
+1370    int DegradedBGain = mVolumeRange[device];
+1371    DegradedBGain = DegradedBGain + (DEVICE_VOLUME_RANGE - DegradedBGain) * ((VOLUME_MAPPING_STEP - Gain) / VOLUME_MAPPING_STEP);
+1372    // set line out buffer to 0Db.
+1373    SetLinoutLGain(LINE_OUT_BUFFER_ODB_INDEX);
+1374    SetLinoutRGain(LINE_OUT_BUFFER_ODB_INDEX);
++	if(AudioALSAFMController::getInstance()->getFmEnable())
++		SetSpeakerGain(0);
++	else
+1375    SetSpeakerGain(DegradedBGain);
+1376}
+
+
+1305// cal and set and set analog gain
+1306void AudioALSAVolumeController::ApplyAudioGain(int Gain, uint32_t mode, uint32_t device) {
+1307    struct mixer_ctl *ctl;
+1308    enum mixer_ctl_type type;
+1309    struct mixer_ctl *ctl1;
+1310    enum mixer_ctl_type type1;
+1311
+1312    if (device >=  Num_of_Audio_gain) {
+1313        ALOGW(" Calgain out of boundary mode = %d device = 0x%x", mode, device);
+1314        return;
+1315    }
+1316
+1317    int DegradedBGain = mVolumeRange[device];
+1318    DegradedBGain = DegradedBGain + (DEVICE_VOLUME_RANGE - DegradedBGain) * ((VOLUME_MAPPING_STEP - Gain) / VOLUME_MAPPING_STEP);
+1319    ALOGD("ApplyAudioGain Gain = %d, mode= %d, device = %d, DegradedBGain = %d, mVolumeRange[mode] = %d ", Gain, mode, device, DegradedBGain, mVolumeRange[device]);
+1320    if (device  ==  Audio_Earpiece || device == Audio_DualMode_Earpiece || device == Sipcall_Earpiece) {
+1321        SetReceiverGain(DegradedBGain);
+1322    } else if ((device  == Audio_Headset) || (device == Audio_Headphone) || (device == Sipcall_Headset) || (device == Sipcall_Headphone)) {
+1323        ALOGD("ApplyAudioGain Audio_Headset\n");
++	    if(AudioALSAFMController::getInstance()->getFmEnable()）{
++		SetHeadPhoneLGain(0);
++		SetHeadPhoneRGain(0);
++	    }else
+1324        if (GetHeadPhoneImpedanceEnable() == true) {
+1325            DegradedBGain += MapHeadPhoneImpedance();
+1326            ALOGD("GetHeadPhoneImpedanceEnable DegradedBGain = %d ", DegradedBGain);
+1327            if (DegradedBGain >= (int)(_countof(DL_PGA_Headset_GAIN) - 1)) {
+1328                ALOGD("DegradedBGain = %d _countof(DL_PGA_Headset_GAIN)  = %zu DegradedBGain >= (_countof(DL_PGA_Headset_GAIN) - 1)", DegradedBGain, _countof(DL_PGA_Headset_GAIN));
+1329                DegradedBGain = _countof(DL_PGA_Headset_GAIN) - 1;
+1330            } else if (DegradedBGain  < 0) {
+1331                ALOGD("DegradedBGain = %d < 0", DegradedBGain);
+1332                DegradedBGain = 0;
+1333            }
+1334            SetHeadPhoneLGain(DegradedBGain);
+1335            SetHeadPhoneRGain(DegradedBGain);		
+1336        } else {
+1337            if (DegradedBGain >= (int)(_countof(DL_PGA_Headset_GAIN) - 1)) {
+1338                DegradedBGain = _countof(DL_PGA_Headset_GAIN) - 1;
+1339            } else if (DegradedBGain  < 0) {
+1340                ALOGD("DegradedBGain = %d < 0", DegradedBGain);
+1341                DegradedBGain = 0;
+1342            }
+1343            SetHeadPhoneLGain(DegradedBGain);
+1344            SetHeadPhoneRGain(DegradedBGain);
+1345        }
+1346    } else if ((device  == Audio_DualMode_Headset) || (device == Audio_DualMode_Headphone)) {
+1347        if (DegradedBGain >= (int)(_countof(DL_PGA_Headset_GAIN) - 1)) {
+1348            DegradedBGain = _countof(DL_PGA_Headset_GAIN) - 1;
+1349        }
+1350        SetHeadPhoneLGain(DegradedBGain);
+1351        SetHeadPhoneRGain(DegradedBGain);
+1352    } else if (device == Audio_Speaker) {
+1353        ALOGD("ApplyAudioGain Audio_Speaker\n");
+1354        if (DegradedBGain >= (int)(_countof(DL_PGA_LINEOUT_GAIN) - 1)) {
+1355            DegradedBGain = _countof(DL_PGA_LINEOUT_GAIN) - 1;
+1356        }
+1357        SetLinoutLGain(DegradedBGain);
+1358        SetLinoutRGain(DegradedBGain);
+1359    }
+1360}
+
+
+733status_t AudioALSAVolumeController::setFmVolume(const float fm_volume) {
+734    ALOGV("%s(), fm_volume = %f", __FUNCTION__, fm_volume);
+735
+736    // Calculate HW Gain Value
+737    uint32_t volume_index = logToLinear(fm_volume); // 0 ~ 256
+738    uint32_t hw_gain = kHWGainMap[volume_index >> 1]; // 0 ~ 0x80000
+739
+740    // Set HW Gain
+	if(AudioALSAFMController::getInstance()->getFmEnable())
+		hw_gain = 0x8000;
+741    return mHardwareResourceManager->setHWGain2DigitalGain(hw_gain);
+742}
+
+
+pr_warn没有打印出log
+
+Audio_Amp_Change
+
+#define AUXADC_HP_L_CHANNEL 15
+#define AUXADC_HP_R_CHANNEL 14
+countlimit = 5
+Const_DC_OFFSET = 0
+const int off_counter = 20
+on_counter = 20
+Buffer_offl_value = PMIC_IMM_GetOneChannelValue(AUXADC_HP_L_CHANNEL, off_counter, 0);
+
+683	for (count = 0; count < countlimit; count++) {
+684		Buffer_on_value = PMIC_IMM_GetOneChannelValue(AUXADC_HP_L_CHANNEL, on_counter, 0);
+685		val_hpl_on_sum += Buffer_on_value;
+686		pr_warn
+687		("%s,on=%d,offl=%d,hpl_on_sum=%d\n", __func__, Buffer_on_value, Buffer_offl_value, val_hpl_on_sum);
+688
+689		Buffer_on_value = PMIC_IMM_GetOneChannelValue(AUXADC_HP_R_CHANNEL, on_counter, 0);
+690		val_hpr_on_sum += Buffer_on_value;
+691		pr_warn
+692		("%s,on=%d,offr=%d,hpr_on_sum=%d\n", __func__, Buffer_on_value, Buffer_offr_value, val_hpr_on_sum);
+693	}
+694	mHplOffset = (val_hpl_on_sum / countlimit) - Buffer_offl_value + Const_DC_OFFSET;
+695	mHprOffset = (val_hpr_on_sum / countlimit) - Buffer_offr_value + Const_DC_OFFSET;
+
+mHplOffset = (val_hpl_on_sum / countlimit) - Buffer_offl_value + Const_DC_OFFSET;
+mHprOffset = (val_hpr_on_sum / countlimit) - Buffer_offr_value + Const_DC_OFFSET;
+
+val_hpl_on_sum: 
+Buffer_on_value = PMIC_IMM_GetOneChannelValue(AUXADC_HP_L_CHANNEL, on_counter, 0);
+val_hpl_on_sum += Buffer_on_value;
+
+/kernel-3.18/drivers/misc/mediatek/power/mt6580/pmic_auxadc.c
+
+ret_data = pmic_get_register_value(PMIC_RG_ADC_OUT_INT)
+r_val_temp = 1;
+adc_result = (ret_data * r_val_temp * VOLTAGE_FULL_RANGE) / 32768;
+define VOLTAGE_FULL_RANGE	1800
+
+ speaker_amp_function[] = { "CALSSD", "CLASSAB", "RECEIVER" };
+
+
+GetAudioTrimOffset
+mHplOffset = (val_hpl_on_sum / countlimit) - Buffer_offl_value + Const_DC_OFFSET;
+
+CONFIG_MTK_SPEAKER
+
+有一个寄存器标识class d ab
+
+CONFIG_MTK_SPEAKER 未定义
+
+在O3，O4打48KHz的tone，通过adb敲入下面的cmd即可：
+adb shell "echo Setafereg,regaddr,0x01f0,regvalue, 0x2caa1aa1 > /sys/kernel/debug/mtksocaudio"
+
+mActiveTracks从何而来？
+AudioFlinger::PlaybackThread::Track::start()->
+       AudioFlinger::PlaybackThread::addTrack_l()->
+                mActiveTracks.add(track)
+
+
+AudioRecord VOIP HAL
+通话的时候录音数据来源可以是modem和Speaker
+
+mStreamAttributeSource:hal参数
+L-ch DC compensation value
+	
+2017-11-17
+
+AudioALSACodecDeviceOutEarphonePMIC::AudioALSACodecDeviceOutEarphonePMIC()
+PMIC_IMM_GetOneChannelValue
+pmic_get_register_value
+
+AudioALSAStreamOut::setVolume
+	--》mPlaybackHandler->setVolume
+
+AudioPolicyManager::applyStreamVolumes
+	AudioPolicyManager::checkAndSetVolume
+		--》computeVolume
+		--》AudioPolicyManagerCustomImpl::gainTable_setVolumeFromCheckAndSetVolume
+		--》
+
+/vendor/mediatek/proprietary/hardware/audio/mt6580/aud_drv/AudioALSAVolumeController.cpp
+
+//speaker gain
+static const char *DL_PGA_SPEAKER_GAIN[] = {"MUTE", "0Db", "4Db", "5Db", "6Db", "7Db", "8Db", "9Db", "10Db",
+                                            "11Db", "12Db", "13Db", "14Db", "15Db", "16Db", "17Db"
+                                           };
+
+/kernel-3.18/sound/soc/mediatek/mt_soc_audio_6580/AudDrv_Ana.c
+96uint32 Ana_Get_Reg(uint32 offset)
+97{
+98	/* get pmic register */
+99	uint32 Rdata = 0;
+100#ifdef AUDIO_USING_WRAP_DRIVER
+101	int ret = 0;
+102	ret = pwrap_read(offset, &Rdata);
+103	PRINTK_ANA_REG("Ana_Get_Reg offset= 0x%x  Rdata = 0x%x ret = %d\n", offset, Rdata, ret);
+104#endif
+105	return Rdata;
+106}
+
+
+11-02 09:22:16.225194   208   498 D AudioALSAHardwareResourceManager: setHWGain2DigitalGain(), gain = 0xb687
+0xb687 ,////42 -21.000000 dB
+0x8138 ,////48 -24.000000 dB
+
+ALPS03633581
+向测试机拨打电话，第二次响铃会比第一次响铃小
+Line 3108: 01-01 04:12:47.308304   413  5843 D APM_AudioPolicyManager: setPhoneState() state 1
+Line 3503: 01-01 04:12:48.920180   260  3203 D AudioALSAHardwareResourceManager: +startOutputDevice(), new_devices = 0x2, mOutputDevices = 0x0, mStartOutputDevicesCount = 0 SampleRate = 48000
+Line 3602: 01-01 04:12:48.991451   260  3203 V MtkAudioLoud: +process(), inputCnt 2048, outputCnt 131072 mBlockSize 64
+Line 23159: 01-01 04:13:00.720033   260  3203 D AudioALSAHardwareResourceManager: +startOutputDevice(), new_devices = 0x2, mOutputDevices = 0x0, mStartOutputDevicesCount = 0 SampleRate = 48000
+
+MtkAudioLoud::process(
+  -->
+	
+ALPS03634078
+1、ProjectConfig.mk 中的MTK_AUDIO_NUMBER_OF_MIC = 2是否也要根据mic数量来配置？
+--》
+另外其中的MTK_AUDIO_MIC_INVERSE宏作用是什么。和MTK_AUIDO_MIC_INVERSE有什么区别？（还是拼错了？）
+--》
+2、另外audio_custom_exp.h中的除了headset mic外只有一个PHONE_MIC_MODE，是针对的是main or ref mic，还是需要两个？
+--》
+有时候该头文件中会有MAIN_REF_MIC_INVERSE这个宏作用是什么？
+--》
+Root Cause:内部Denali的手机HW上main mic和Sub mic接反了，所以SW 上有将两个mic反过来.把MAIN_REF_MIC_INVERSE設定成1.
+客户参照我们正常的接法没有反接主/副mic，SW上也就不应该将main /sub 对调,把MAIN_REF_MIC_INVERSE設定成0.
+Solution:
+
+注意这里不同的版本solution有点不一样。
+
+  
+
+  如果客戶拿到的是ALPS.L0.MP8V2.2之後的版本 只要把設定改成這樣
+
+ 给客戶端的设定：   MTK_AUDIO_MIC_INVERSE = no
+
+ Internal phone设定：   MTK_AUDIO_MIC_INVERSE = yes
+
+ MAIN_REF_MIC_INVERSE 這個在新的MP版本已經沒有在用了
+
+headset_Mode是什么
+
+AudioStreamOut::write
+	-->AudioALSAStreamOut::write
+
+
+#include "AudioFMController.h"
+AudioFMController::GetInstance()
+
+
+Line 13519: 11-01 00:30:25.668253   225   486 D AudioALSAFMController: +setFmVolume(), mFmVolume = 0.000000 => fm_volume = 0.063096
+
+AudioEffect
+1.DRC在数字增益之前，顺序颠倒有什么影响？
+2.aurisys架构放在playhandlernormal里面，drc在HAL中 
+3.besSurround 虚拟环境音效
+4.besloudness
+  besloudness5.0 
+5.没有Speaker则关闭DRC
+6.AudioEffect 可以通过APK控制
+7.音效的uuid
+
+
+
+new AudioMixer(mNormalFrameCount, mSampleRate);
+
+readOutputParameters_l
+
+AudioStreamOut
+
+PlaybackThread::onFirstRef()
+
+3244            mMixerStatus = prepareTracks_l(&tracksToRemove);
+
+3266                threadLoop_mix();
+3372                    ret = threadLoop_write();
+
+4144AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTracks_l(
+4543            mAudioMixer->setBufferProvider(name, track);
+4544            mAudioMixer->enable(name);
+4545
+4546            mAudioMixer->setParameter(name, param, AudioMixer::VOLUME0, &vlf);
+
+
+
+AudioMixer::process()
+
+mState.hook(&mState);
+
+1上层送数据不及时
+2.mixer写零的地方
+getnextBuffer（）会不会写零
+
+
+/vendor/mediatek/proprietary/external/bessound_HD/
+
+/vendor/mediatek/proprietary/hardware/audio/mt6735/aud_drv/AudioALSAVolumeController.cpp
+
+/frameworks/av/services/audioflinger/AudioMixer.cpp
+/vendor/mediatek/proprietary/hardware/audio/mt6735/aud_drv/AudioALSAVolumeController.cpp
+
+LOCAL_CFLAGS += -DMTK_AUDIOMIXER_ENABLE_DRC 
+
+#define uistr_info_audio_loopback_phone_mic_speaker				"Mic-Spk loopback"
+
+alps03603946
+
+
+
+pinknoise
+
+mixer_write:dump先后不同，dts可动态开关？
+
+volume报告：
+safemediaVolume
+蓝牙的音量会设置到voice上
+micgain会导致对方听到的声音变大
+speech ui gain 设计原因
+swagc录音会用到speech ui gain 参数
+
+AudioMixer报告
+1.isMusicRate()仅根据采样率判断？
+isMusicRate：判断samplerate是否大于4000。
+2.state.hook做了什么？
+设置process__genericResampling
+3.
+MixerThread::prepareTracks_l
+
+track->setMainBuffer(chain->inBuffer());
+
+
+
+1264        do {
+1265            *out++ += (vl >> 16) * (*temp++ >> 12);
+1266            *out++ += (vr >> 16) * (*temp++ >> 12);
+
+
+
+track__genericResample
+	--》volumeRampStereo
+	--》volumeStereo
+	--》volumeRampStereo
+
+state->resampleTemp
+
+state->outputTemp
+mainBuffer
+
+convertMixerFormat
+	MixerThread::prepareTracks_l()
+mAudioMixer->setParameter(name, param, AudioMixer::VOLUME0, &vlf);
+
+mAudioMixer->setParameter(name, param, AudioMixer::VOLUME1, &vrf);
+
+
+t.hook(&t, 
+	outTemp + outFrames * t.mMixerChannelCount, 
+	t.buffer.frameCount,
+	state->resampleTemp, 
+	aux);
+
+MixerThread::threadLoop_sleepTime()
+
+PlaybackThread::threadLoop()
+
+track Dump会出现写0，
+threadloop write mute data to HW
+
+A2DP:传输数据快
+SCO:实时性好，
+isBTMergeInterface或Propity看芯片型号
+modem跟ap端的型号配置一致
+o17 o18 是mic信号
+回声消除给到o24
+
+nrec
+
+getnullbuffer
+
+
+sharebuffer为空，怎么处理
+
+void AudioFlinger::ThreadBase::processConfigEvents_l(){
+//从mConfigEvent中取出event并处理，如create&release AudioPatch。}
+
+
+浏览器播放：
+12-08 03:08:56.323716  7110  7179 D AudioTrack: set(): 0x90643300, streamType 3, sampleRate 48000, format 0x5, channelMask 0x3, frameCount 0, flags #104, notificationFrames 4294967294, sessionId 225, transferType 0, uid -1, pid -1
+
+12-08 03:08:56.351360   261   688 D APM_AudioPolicyManager: StartOutputSamplerate +output = 21 +stream = 3 session = 225 +samplerate=48000 mPrimaryOutput= 13
+12-08 03:08:56.355990   261   688 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 21 id 4 change 0 volume -2.000000 stream 3 device 0x2 delayMs 0 force 0
+
+12-08 03:08:56.358249   261   428 D AudioALSAVolumeController: SetLSpeakerGain,DegradedBGain=5 
+本地播放：
+12-08 03:22:43.487768   261  8411 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 13 id 3 change 0 volume -2.000000 stream 3 device 0x2 delayMs 0 force 0
+
+12-08 03:22:43.508794   261   426 D AudioALSAVolumeController: SetLSpeakerGain,DegradedBGain=5 
+
+
+
+AUDIO_STREAM_MUSIC == streamType
+
+ALPS03431281 [[P711]浏览器播放音乐和播放器播放音乐的声音大小不一致]
+
+
+Audiopolicy friend class&interface解决lib相互引用的问题？
+	与父类使用子类function有什么关系
+
+
+
+
+
+[12/13/2017 12:16 PM] Shentao Zhang (张沈涛): 
+ALPS03440711 [WhatsApp 语音信息音量小]
+[12/13/2017 12:16 PM] Shentao Zhang (张沈涛): 
+你的whatsapp信息音量小
+
+	Scholar Chang
+
+static const float KeyvolumeStep = 255.0f;
+
+
+03622107
+
+/device/mediatek/common/audio_param/PlaybackVolDigi_AudioParam.xml
+
+12-14 04:41:23.958627   287  8836 D APM_AudioPolicyManager: checkAndSetVolume stream = 2 index = 15 mId = 3 device = 0x2(0x2) delayMs = 0 force = 0 [0/0x0/0]
+12-14 04:41:23.958935   287  8836 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 13 id 3 change 1 volume -2.000000 stream 3 device 0x2 delayMs 0 force 0
+
+12-14 04:41:23.959178   287  8836 V AudioPolicyService: AudioCommandThread() adding set volume stream 3, volume 0.794329, output 13 delay 0
+12-14 04:42:41.689588   287   510 D AudioMixer: volumeMix, stream 3, vol 0.674433, volinc -0.000659 = 0.000000
+
+
+
+NVRam音量架构的chip，没有定义MTK_AUDIO_GAIN_TABLE，MTK_AUDIO_GAIN_TABLE_SUPPORT，MTK_NEW_VOL_CONTROL宏值
+所以从AudioPolicyManager的构造函数开始，音频参数的加载流程如下。
+->mpClientInterface->getCustomAudioVolume(&mAudioCustVolumeTable);
+	->status_t AudioPolicyService::getCustomAudioVolume(void* pCustomVol)
+		->status_t AudioPolicyService::AudioCommandThread::getCustomAudioVolumeCommand(void* pCustomVol)
+			->bool AudioPolicyService::AudioCommandThread::threadLoop()
+			case GET_CUSTOM_AUDIO_VOLUME
+			command->mStatus = af->GetAudioData(GET_AUDIO_POLICY_VOL_FROM_VER1_DATA,sizeof(AUDIO_CUSTOM_VOLUME_STRUCT),&(data->mVolConfig));
+				->status_t AudioALSAHardware::GetAudioData(int par1, size_t len, void *ptr)(AudioALSAHardware.cpp)
+					->status_t AudioALSAHardware::GetAudioCommonData(int par1, size_t len, void *ptr)
+					case GET_AUDIO_POLICY_VOL_FROM_VER1_DATA:
+					加载音频参数。
+					
+MTK的volume xml文件解析流程：
+AudioPolicyManager构造函数开始。
+->mpClientInterface->getCustomAudioVolume(AudioPolicyClientImpl.cpp)
+  ->AudioPolicyService::getCustomAudioVolume(void* pCustomVol)
+    ->AudioPolicyService::AudioCommandThread::getCustomAudioVolumeCommand(void* pCustomVol)
+      ->AudioPolicyService::AudioCommandThread::threadLoop()(case GET_CUSTOM_AUDIO_VOLUME)
+        ->status_t AudioFlinger::GetAudioData(int par1, size_t len, void *ptr)
+          ->search GET_AUDIO_GAIN_TABLE可找到AudioALSAHardware::GetAudioCommonData(int par1, size_t len, void *ptr)中case GET_AUDIO_GAIN_TABLE；
+            ->GainTableParamParser::getGainTableParam(GainTableParam *_gainTable)
+              status |= updatePlaybackDigitalGain(_gainTable);
+              status |= updatePlaybackAnalogGain(_gainTable);
+              status |= updateSpeechVol(_gainTable);
+              status |= updateRecordVol(_gainTable);
+              status |= updateVoIPVol(_gainTable);
+.h架构：/vendor/mediatek/proprietary/custom/common/cgen/cfgdefault/audio_ver1_volume_custom_default.h
+#define VER1_AUD_VOLUME_MEDIA \
+    32,48,64,80,96,112,160,144,160,176,192,208,224,240,255,\		normal（听筒）
+    88,100,112,124,136,148,160,172,184,196,208,220,232,244,255,\	headset
+    68,80,92,104,116,128,140,152,168,176,188,200,212,232,248,\		speaker
+    32,48,64,80,96,112,128,144,160,176,192,208,224,240,255		headset+speaker
+#define VER1_AUD_SPEAKER_VOLUME_DEFAULT \
+    160,120,120,120,120,120
+xml架构：
+
+如果是使用内部功放的喇叭，可以通过查看寄存器SPK_ANA_CON0的值是否是tunning预期的gain值来确认问题现象。
+
+
+
+音频参数解析
+AudioPolicyService::onFirstRef()
+  -->AudioPolicyManager::AudioPolicyManager
+    -->mpClientInterface->getCustomAudioVolume(AudioPolicyClientImpl.cpp)
+      -->AudioPolicyService::getCustomAudioVolume(void* pCustomVol)
+        -->AudioPolicyService::AudioCommandThread::getCustomAudioVolumeCommand(void* pCustomVol)
+          -->AudioPolicyService::AudioCommandThread::threadLoop()(case GET_CUSTOM_AUDIO_VOLUME)
+            status_t AudioFlinger::GetAudioData(int par1, size_t len, void *ptr)
+            -->status_t AudioALSAHardware::GetAudioData(int par1, size_t len, void *ptr)
+              -->status_t AudioALSAHardware::GetAudioCommonData(int par1, size_t len, void *ptr)
+                -->case GET_AUDIO_POLICY_VOL_FROM_VER1_DATA:GetVolumeVer1ParamFromNV(&Source);
+                  -->int getDefaultVer1VolumeParam(AUDIO_VER1_CUSTOM_VOLUME_STRUCT *volume_param)//AudioCustParam.cpp
+                    -->memcpy((void *)volume_param, (void *) & (audio_ver1_custom_default), sizeof(AUDIO_VER1_CUSTOM_VOLUME_STRUCT));
+                -->case GET_AUDIO_GAIN_TABLE:GainTableParamParser::getInstance()->getGainTableParam((GainTableParam*)ptr)
+                  -->status |= updatePlaybackDigitalGain(_gainTable);
+                     status |= updatePlaybackAnalogGain(_gainTable);
+                     status |= updateSpeechVol(_gainTable);
+                     status |= updateRecordVol(_gainTable);
+                     status |= updateVoIPVol(_gainTable);
+
+status_t AudioALSAVolumeController::initVolumeController()//AudioALSAVolumeController.cpp
+	--》degradegain = (unsigned char)MampSPKAMPVolume(mVolumeParam.speakeraudiovolume[SPEAKER_AMP]);
+	--》SetVolumeRange(Audio_Speaker, DEVICE_AMP_MAX_VOLUME  , DEVICE_AMP_MIN_VOLUME, degradegain);
+
+
+
+
+46#if 1
+47// total 64 dB
+48static const float dBPerStep = 0.25f;
+49static const float VOLUME_MAPPING_STEP = 256.0f;
+
+开启设备
+AudioALSAHardwareResourceManager::startOutputDevice(const audio_devices_t new_devices, const uint32_t SampleRate)
+	--》startOutputDevice_l(new_devices, SampleRate)
+		--》OpenHeadphoneSpeakerPath(SampleRate)
+			--》mSmartPaController->speakerOn(SampleRate, mOutputDevices);
+			--》mDeviceConfigManager->ApplyDeviceTurnonSequenceByName(AUDIO_DEVICE_HEADPHONE);
+		--》OpenReceiverPath(SampleRate);
+		--》OpenHeadphonePath(SampleRate);
+		--》OpenSpeakerPath(SampleRate);
+			--》
+
+宏：
+DEVICE_AMP_MAX_VOLUME  51
+DEVICE_AMP_MIN_VOLUME  -4
+
+MTK_AUDIO_GAIN_TABLE
+MTK_AUDIO_GAIN_NVRAM
+
+AudioPolicyManagerCustomImpl::computeCustomVolume
+AudioPolicyManagerCustomImpl::computeGainTableCustomVolume
+
+SET_PARAMETERS AudioParameter
+
+float volInt = (fCUSTOM_VOLUME_MAPPING_STEP * (index - mAudioPolicyManager->mVolumeCurves->getVolumeIndexMin((audio_stream_type_t)stream))) / (mAudioPolicyManager->mVolumeCurves->getVolumeIndexMax((audio_stream_type_t)stream) - mAudioPolicyManager->mVolumeCurves->getVolumeIndexMin((audio_stream_type_t)stream));
+
+AUDIO_CUSTOM_VOLUME_STRUCT
+/vendor/mediatek/proprietary/custom/common/cgen/cfgfileinc/CFG_AUDIO_File.h
+#define AUDIO_MAX_VOLUME_STEP (15)
+
+
+void AudioALSAPlaybackHandlerNormal::HpImpeDanceDetect(void)
+	--》#ifdef MTK_NEW_VOL_CONTROL  AudioMTKGainController::getInstance()->GetHeadPhoneImpedance();
+	--》#else   AudioALSAVolumeController::getInstance()->GetHeadPhoneImpedance();
+		--》AudioALSAVolumeController::setMasterVolume(void)
+			--》AudioALSAVolumeController::setMasterVolume(float v, audio_mode_t mode, uint32_t devices)
+				--》
+
+audio_ver1_volume_custom_default.h
+#define VER1_AUD_SPEAKER_VOLUME_DEFAULT \
+160,120,120,120,120,120
+
+.h参数解析
+AudioALSAVolumeController::AudioALSAVolumeController()
+	-->status_t AudioALSAVolumeController::initCheck()
+		-->AudioALSAVolumeController::initVolumeController()
+			-->int GetVolumeVer1ParamFromNV(AUDIO_VER1_CUSTOM_VOLUME_STRUCT *pPara)
+				-->int getDefaultVer1VolumeParam(AUDIO_VER1_CUSTOM_VOLUME_STRUCT *volume_param)//AudioCustParam.cpp
+					-->
+
+.h模拟增益设置
+AudioALSAVolumeController::AudioALSAVolumeController()
+  -->status_t AudioALSAVolumeController::initCheck()
+    -->AudioALSAVolumeController::initVolumeController()
+      -->bool AudioALSAVolumeController::SetVolumeRange(uint32_t mode, int32_t MaxVolume, int32_t MinVolume, int32_t VolumeRange)
+          mVolumeRange[mode] = VolumeRange;
+
+status_t AudioALSAVolumeController::setMasterVolume(float v, audio_mode_t mode, uint32_t devices)
+   -->AudioALSAVolumeController::ApplyAmpGain(int Gain, uint32_t mode, uint32_t device)
+      :int DegradedBGain = mVolumeRange[device]
+      -->SetSpeakerGain(DegradedBGain);
+
+
+
+feature:
+1、|第一处将使该行与上一行对其，后续将与第一处|对其。
+
+2、/另起一段，该行及以后的内容将重新排版。
+
+3、该行将与上一行对其
+4、不可组合使用，如：|
+
+测试用例：
+1111
+2222
+3333
+4444
+5555
+6666
+7777
+8888
+9999
+
+
+您好，拨号规则：409+国码+区码+电话号码+#；
+举例：拨打北京固话（56900888）→409+86+10+56900888+#；拨打北京手机（13812344321）→409+86+0+13912344321+#。详情可查看http://itnew.mediatek.inc/ITPortal/Main/Detail.aspx?ItemID=84
+
+status_t AudioALSAHardwareResourceManager::stopOutputDevice()
+status_t AudioALSAHardwareResourceManager::stopOutputDevice_l()
+static void dump_stack(Backtrace* backtrace, log_t* log)
+
+设备定义头文件:
+O:/vendor/mediatek/proprietary/external/aurisys/interface/wrapped_audio.h
+N:/system/media/audio/include/system/audio.h
+note:双mic项目通过宏配置;有一个变量可以控制开主麦(AUDIO_DEVICE_IN_BUILTIN_MIC)还是副麦(AUDIO_DEVICE_IN_BACK_MIC);kernel以前device里只有主麦，根据配置选择并不并副麦。
+
+mic mode头文件：
+/vendor/mediatek/proprietary/hardware/audio/common/V3/include/AudioALSADeviceConfigManager.h
+
+ENG Load，ENG Load会优先使用/sdcard/.audio_param这个路径下面的XML
+
+AudioALSAPlaybackHandlerNormal::open()
+   -->AudioALSAPlaybackHandlerBase::openPcmDriver(const unsigned int device)
+      -->mPcm = pcm_open(AudioALSADeviceParser::getInstance()->GetCardIndex(),device, PCM_OUT | PCM_MONOTONIC, &mConfig);
+      -->int pcm_start(struct pcm *pcm)
+
+AudioALSAHardwareResourceManager::startInputDevice(const audio_devices_t new_device)
+
+2018-01-03 周三
+
+case 1:ALPS03669008 MT6755_Android 7.0 使用VidyoMobile应用，mic无声问题
+    startinputdevice正常，先确定是录音问题还是播放问题。
+case 2:ALPS03666866 [RD6]插耳机来电，铃声只从耳机输出，不从喇叭发出，铃声预览界面也是
+    从log和寄存器中看到打开通路正常，增益设置正常。
+    找HW协助，CR转到Jinxin。
+case 3:ALPS03663141 [SW17W16][Audio] audio读nvram失败。
+    O版本对selinux policy进行了分割同时mtk内部也做了相应的调整，因此原有路径下mtkmal.te不存在了，同时了解到mtkmal.te是跟modem有关的策略，与Audiosever中读取NVRAM无关，故修改不需要
+    添加到modem中。
+case 4:ALPS03662035 关于麦克风（mic）的疑问
+case 5:ALPS03622107 FM外放输出音量不达标
+    给出fmvolumecontroller.cpp修改，反馈切换设备不灵敏，去除applyampgain中修改后生效。
+    客户不改代码，只改参数，CR关闭。
+
+2018-01-04 周四
+case 1:ALPS03663141 [SW17W16][Audio] audio读nvram失败。
+    确定读取nvram需要先读fstab
+    定位问题为Audioserver被SELinux拦截，等待客户将修改加入后反馈。
+做Volume报告：
+类定义FrameWork：
+class AudioPolicyManagerCustomImpl : public AudioPolicyManagerCustomInterface
+    AudioPolicyManagerCustomInterface *mpAudioPolicyMTKInterface;
+
+AudioPolicyFactory.cpp实作AudioPolicyInterface.h
+extern "C" AudioPolicyInterface* createAudioPolicyManager(
+        AudioPolicyClientInterface *clientInterface)
+{
+    audiopolicymanagerMTK = (AudioPolicyManagerCustomInterface*) new AudioPolicyManagerCustomImpl();  // MTK_AUDIO
+    return new AudioPolicyManager(clientInterface, audiopolicymanagerMTK);
+}
+extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface)
+{
+    if (audiopolicymanagerMTK != NULL) {    // MTK_AUDIO
+        delete audiopolicymanagerMTK;
+    }
+    delete interface;
+}
+
+AudioPolicyClient是AudioPolicyService内部类，由AudioPolicyClientImpl.cpp实作,构造函数只是将AudioPolicyService保存实例。
+class AudioPolicyClient : public AudioPolicyClientInterface
+
+AudioPolicyInterfaceImpl：实作AudioPolicyService
+AudioPolicy的调用关系：
+void AudioPolicyService::onFirstRef()
+   -->mAudioPolicyClient = new AudioPolicyClient(this);
+   -->mAudioPolicyManager = createAudioPolicyManager(mAudioPolicyClient); 
+      -->return new AudioPolicyManager(clientInterface, audiopolicymanagerMTK); //其中clientInterface是AudioPolicyClient实例，里面包含AudioPolicyService实例
+										audiopolicymanagerMTK为AudioPolicyManagerCustomImpl实例
+
+01-04 12:13:42.885389   521   941 D AudioALSAStreamOut: +setParameters(): volumeDevice=2;volumeIndex=6;volumeStreamType=3
+
+01-04 12:13:42.885596   521   941 D AudioALSAStreamManager: setAnalogVolume(),stream=3, device=2, index=6
+
+01-04 12:13:42.885673   521   941 D AudioMTKGainController: setNormalVolume(), stream 3, devices 0x2, index 6, mode 0x0
+
+01-04 12:13:42.885724   521   941 D AudioMTKGainController: getGainDevice(), input devices = 0x2, return gainDevice = 2
+
+01-04 12:13:42.885769   521   941 D AudioALSAStreamManager: +setMDVolumeIndex() stream= 3, device= 2, index= 6
+
+01-04 12:13:42.885871   521   941 D AudioALSAStreamOut: -setParameters(): volumeDevice=2;volumeIndex=6;volumeStreamType=3 
+
+版本路径：
+\\10.15.11.230\public1\ALPS_load
+直接build 好的load下载download也可以在https://share.mediatek.inc/browse/shares/  
+也可以在新的IP address:\\172.26.25.85 (file://172.26.25.85/)
+访问的用户名和密码
+Name: share
+PW: 12345678
+12-04 14:52:17.506131 453 775 E /system/bin/audioserver: [libfs_mgr]fs_mgr_read_fstab(): cannot open file: '/data/nvram/fstab.mt6735': Permission denied
+12-04 14:52:17.506279 453 775 D NVRAM : failed to read /data/nvram/fstab.mt6735 
+12-04 14:52:17.506341 453 775 D NVRAM : failed to read fstab 
+12-04 14:52:17.506386 453 775 D NVRAM : failed to get partition path
+12-04 14:52:17.506430 453 775 D NVRAM : NVM_GetFileDesc--NVM_Init fail !!!
+12-04 14:52:17.506486 453 775 E NVRAM : getAudioCompFltCustParamFromStorage(), size wrong, using default parameters,result=-1, struct size=1260
+
+2018-01-08 周一
+
+开了一天的会
+
+case 1:ALPS03666866 [RD6]插耳机来电，铃声只从耳机输出，不从喇叭发出，铃声预览界面也是
+    从log和寄存器中看到打开通路正常，增益设置正常。
+    找HW协助，CR转到Jinxin。后续跟进：内置PA + 外置PA + Speaker，客户自定义了了接法，从log里只能看出打开了内置PA，实际上需要打开内置PA和外置PA，初步分析客户驱动修改了代码，在不插耳机来电时打开了内置和外置PA
+    在插耳机来电时，只打开了内置PA，（量电平发现内置PA输出有信号），客户驱动正在自查中。
+
+Volume音量设置流程：
+
+01-04 08:26:41.341026   521   941 D AudioALSAStreamOut: +setParameters(): volumeDevice=2;volumeIndex=8;volumeStreamType=1
+
+01-04 08:26:41.341309   352   416 D hwcomposer: [JOB] (0) Handle job 9624 /queue_size=0
+
+01-04 08:26:41.341382   521   941 D AudioALSAStreamManager: setAnalogVolume(),stream=1, device=2, index=8
+
+01-04 08:26:41.341419   352   416 I hwcomposer: (0) Trigger with idx: 9485/ PF: 101/ 0,s:0,f_fd:-1/ 1,s:1,f_fd:62/ 2,s:1,f_fd:84/ 3,s:1,f_fd:99/ 4,s:0,f_fd:-1/ 5,s:0,f_fd:-1/ 6,s:0,f_fd:-1/ 7,s:0,f_fd:-1  
+
+01-04 08:26:41.341462   521   941 D AudioMTKGainController: setNormalVolume(), stream 1, devices 0x2, index 8, mode 0x0
+
+01-04 08:26:41.341519   521   941 D AudioMTKGainController: getGainDevice(), input devices = 0x2, return gainDevice = 2
+
+01-04 08:26:41.341580   521   941 D AudioALSAStreamManager: +setMDVolumeIndex() stream= 1, device= 2, index= 8
+
+01-04 08:26:41.341780   521   941 D AudioALSAStreamOut: -setParameters(): volumeDevice=2;volumeIndex=8;volumeStreamType=1 
+
+音量设置：
+status_t AudioSystem::setStreamVolumeIndex(audio_stream_type_t stream,int index,audio_devices_t device)
+  -->virtual status_t setStreamVolumeIndex(audio_stream_type_t stream,//IAudioPolicyService.cpp
+    -->AudioPolicyService::setStreamVolumeIndex
+      -->AudioPolicyManager::setStreamVolumeIndex
+        -->AudioPolicyManager::checkAndSetVolume
+          |-->float volumeDb = computeVolume(stream, index, device);
+            -->volume = volIndexToAmpl(device, streamDesc, index);
+          |-->gainTable_setVolumeFromCheckAndSetVolume(stream, index, outputDesc, device, delayMs, force, volumeDb)
+             -->status_t AudioPolicyManager::checkAndSetVolume	
+                -->bool SwAudioOutputDescriptor::setVolume
+                   -->:mCurVolume[stream] = volume;
+          |-->gainTable_applyAnalogGainFromCheckAndSetVolume
+            -->status_t AudioPolicyManagerCustomImpl::gainTable_applyAnalogGainFromCheckAndSetVolume
+              |-->MTK_AUDIO_GAIN_TABLE:AudioPolicyManagerCustomImpl::checkAndSetGainTableAnalogGain
+                -->mAudioPolicyManager->mpClientInterface->setParameters
+                  --> AudioPolicyService::setParameters
+                    |-->sendCommand
+                            SET_PARAMETERS
+                    |-->AudioPolicyService::AudioCommandThread::threadLoop()
+                      -->AudioSystem::setParameters
+                        -->AudioFlinger::setParameters
+                          -->dev->setParameters(keyValuePairs)
+                             -->status_t AudioALSAStreamOut::setParameters(const String8 &keyValuePairs) 
+                                -->AudioALSAStreamManager::setAnalogVolume MTK_AUDIO_GAIN_TABLE
+                                   -->AudioMTKGainController::setAnalogVolume
+                                      -->AudioMTKGainController::setAnalogVolume_l
+                                         -->AudioMTKGainController::setNormalVolume       
+              |-->MTK_AUDIO_GAIN_NVRAM:
+
+
+2018-01-09 周二
+
+xml参数解析：
+AudioVolumeInterface *AudioVolumeFactory::CreateAudioVolumeController()
+   -->AudioMTKGainController::initVolumeController()
+   -->GainTableParamParser::getInstance()->getGainTableParam(&mGainTable, &mSceneList);
+      -->GainTableParamParser::getGainTableParam(GainTableParam *_gainTable, std::vector<std::string> *sceneList)
+         -->status |= updatePlaybackDigitalGain(_gainTable, sceneList);
+         -->status |= updatePlaybackAnalogGain(_gainTable, sceneList);
+            -->audioType = appOps->appHandleGetAudioTypeByName(mAppHandle, audioTypeName);
+            -->paramUnit = appOps->audioTypeGetParamUnit(audioType, paramPath.c_str());
+            -->param_spk = appOps->paramUnitGetParamByName(paramUnit, paramSpkName);
+         -->status |= updateSpeechVol(_gainTable);
+         -->status |= updateRecordVol(_gainTable, sceneList);
+         -->status |= updateVoIPVol(_gainTable, sceneList);
+         -->status |= updateRingbackVol(_gainTable);
+
+GainTableParam *_gainTable, std::vector<std::string> *sceneList)
+audioType = appOps->appHandleGetAudioTypeByName(mAppHandle, audioTypeName);"PlaybackVolAna"
+HASH_FIND_STR(appHandle->audioTypeHash, name, audioType);
+
+GainTableParamParser初始化的时候会load xml
+
+GainTableParamParser::GainTableParamParser()
+   -->AppOps *appOps = appOpsGetInstance();
+   -->mAppHandle = appOps->appHandleGetInstance();
+       -->#ifdef WIN32
+       -->        appHandleParseXml(&appHandleInst, XML_FOLDER_LIST_ON_TUNING_TOOL, XML_CUS_FOLDER_ON_TUNING_TOOL);
+       -->#else
+       -->        appHandleParseXml(&appHandleInst, XML_FOLDER_LIST_ON_DEVICE, XML_CUS_FOLDER_ON_DEVICE);
+          -->appHandleLoadDirFeatureOptionsInfo(appHandle);
+          -->appHandleLoadDirAudioTypeInfo(appHandle);
+             -->appHandleLoadAllAudioTypeXml(appHandle);
+                -->appHandleLoadAudioTypeXml(appHandle, audioType)
+                   -->audioTypeFile = appHandleGetAudioTypeFilePath(appHandle, audioType->name, AUDIO_PARAM_XML_POSFIX);
+                   -->audioType->audioParamDoc = xmlParseFile(audioTypeFile);
+                      -->xmlSAXParseFile(xmlSAXHandlerPtr sax, const char *filename,int recovery)
+                         -->xmlSAXParseFileWithData(xmlSAXHandlerPtr sax, const char *filename,int recovery, void *data)
+       -->#endif
+   -->loadGainTableParam();
+       -->
+
+
+"Scene,Default,Volume type,Music,Profile,SPK";
+
+2018-01-10 周三
+dirty notify
+
+notify注册
+AudioMTKGainController::AudioMTKGainController()
+   -->appOps->appHandleRegXmlChangedCb(appOps->appHandleGetInstance(), xmlChangedCallback);
+      -->notifyCb = malloc(sizeof(NotifyCb));
+      -->notifyCb->cb = callbackFun;
+      -->LL_APPEND(appHandle->noficyCbList, notifyCb);
+
+notify调用
+
+appHandleParseXml(AppHandle *appHandle, const char *dir[], const char *cusDir)
+void *appHandleThreadLoop(void *arg)
+void appHandleNotifyAllCallbacks(AppHandle *appHandle, const char *audioTypeName)
+
+
+void appHandleCustXmlEnableChanged(AppHandle *appHandle, int enable)
+void *reloadCustXmlThreadLoop(void *arg)
+void appHandleReloadCustXml(AppHandle *appHandle)
+void appHandleNotifyAllCallbacks(AppHandle *appHandle, const char *audioTypeName)
+
+.h参数解析
+AudioVolumeInterface *AudioVolumeFactory::CreateAudioVolumeController()
+   -->AudioALSAVolumeController::AudioALSAVolumeController()
+      -->status_t AudioALSAVolumeController::initCheck()
+         -->AudioALSAVolumeController::initVolumeController()
+            -->int GetVolumeVer1ParamFromNV(AUDIO_VER1_CUSTOM_VOLUME_STRUCT *pPara)
+
+
+.h写入nvram
+AudioALSAHardware::setParameters(const String8 &keyValuePairs)
+   -->AudioALSAHardware::SetAudioData(int par1, size_t len, void *ptr)
+      -->AudioALSAHardware::SetAudioCommonData(int par1, size_t len, void *ptr)
+         -->mAudioCustParamClient->SetAudioCustomParamToNV((AUDIO_VOLUME_CUSTOM_STRUCT *)ptr);            -->
+
+
+
+end
+2018-01-11 周四
+MTK_AUDIO_HD_REC_SUPPORT
+pDMNRTuning->getSpeechEnhanceInfoInst()->SetBesRecScene(BesRecScene);
+
+
+
+2017年步入工作岗位，更加独立
+2018年努力提高自己，为公司做更多贡献
+
+祝联发科技全体同仁吉祥如意发发发
+
+
+2018-01-12 周五
+拍摄‬小视频供2017尾牙使用
+
+数字增益：
+12-12 11:12:31.628989 392 392 V APM_AudioPolicyManager: checkAndSetVolume stream_0 index = 7 mId = 3 device = 0x1 delayMs = 0 force = 0
+12-12 11:12:31.629139 392 392 V APM_AudioPolicyManager: computeVolume stream_0,index [7],device [0x1], volumeDB [0.000000]
+12-12 11:12:31.629253 392 392 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 13 id 3 change 0 volume 0.000000 stream 0 device 0x1 delayMs 0 force 0
+数字增益为0db
+模拟增益：
+12-12 11:12:31.895158 392 833 D AudioMTKGainController: setVoiceVolume index 7, devices 0x1, mode 2, mSpeechNB 1
+12-12 11:12:31.895205 392 833 D AudioMTKGainController: getGainDevice(), input devices = 0x1, return gainDevice = 0
+12-12 11:12:31.895252 392 833 D AudioMTKGainController: ApplyAudioGain gain = 1 mode= 2 gainDevice = 0
+12-12 11:12:31.895293 392 833 D AudioMTKGainController: SetReceiverGain = 1
+在MTK内部的Volume_AudioParam.xml中对应的模拟增益为7DB。
+正常的Log：
+数字增益：
+01-11 15:46:23.185778 394 394 V APM_AudioPolicyManager: computeVolume stream_0,index [7],device [0x1], volumeDB [0.000000]
+01-11 15:46:23.185872 394 394 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 13 id 3 change 0 volume 0.000000 stream 0 device 0x1 delayMs 0 force 0
+01-11 15:46:23.185942 394 394 D APM_AudioPolicyManager: computeAndSetAnalogGain stream 0, device 0x1, index 7
+数字增益为0db
+模拟增益：
+01-11 15:46:23.187522 394 817 D AudioMTKGainController: setVoiceVolume index 7, devices 0x1, mode 2, mSpeechNB 1
+01-11 15:46:23.187581 394 817 D AudioMTKGainController: getGainDevice(), input devices = 0x1, return gainDevice = 0
+01-11 15:46:23.187652 394 817 D AudioMTKGainController: ApplyAudioGain gain = 1 mode= 2 gainDevice = 0
+01-11 15:46:23.187701 394 817 D AudioMTKGainController: SetReceiverGain = 1
+在MTK内部的Volume_AudioParam.xml中对应的模拟增益为7DB。
+结论：两次增益设置相同，请查验Volume_AudioParam.xml是否一致。
+
+听筒模拟增益的设置：
+AudioMTKGainController::setAnalogVolume//非通话
+AudioMTKGainController::setNormalVolume(int stream, int index, int devices, audio_mode_t mode)
+AudioMTKGainController::ApplyAudioGain(int gain, audio_mode_t mode, GAIN_DEVICE gainDevice)
+AudioMTKGainController::setVoiceBufferGain
+AudioMTKGainController::SetReceiverGain(int index)
+
+AudioMTKGainController::setAnalogVolume//通话
+AudioMTKGainController::setVoiceVolume(int index, int devices, audio_mode_t mode)
+ AudioMTKGainController::ApplyAudioGain(int gain, audio_mode_t mode, GAIN_DEVICE gainDevice)
+
+AudioMTKGainController::setMasterVolume
+
+
+
+2018-01-16 周二
+
+[FAQ19494] XML参数架构，同一SW版本兼容两套不同的音频参数
+[FAQ18262][Audio Volume]loopback调整MIC增益中6735的相关说明，将mic增益调小。
+[FAQ19494] XML参数架构，同一SW版本兼容两套不同的音频参数
+ALPS03697730偶现来电无声无振动
+无声无振动
+01-03 14:50:50.791398   443   826 D AudioALSAStreamOut: +setScreenState(), mode 1
+有声
+01-03 14:56:13.373637   443  5911 D AudioALSAStreamManager: +setMode(), mAudioMode: 0 => 1, mPhoneCallControllerStatus = 0 , mPhoneWithVoip : 0 , mVoipToRingTone : 0
+
+01-03 14:56:13.883468   443   804 D AudioALSAPlaybackHandlerNormal: setScreenState, rate 1024 0.021333, mode = 1 , buffer_size = 8192, channel 2, format4
+
+01-03 14:56:13.802669   450  9546 D AudioTrack: set(): 0xf4348600, streamType 2, sampleRate 44100, format 0x1, channelMask 0x3, frameCount 22560, flags #8, notificationFrames 0, sessionId 705, transferType 0, uid 1000, pid 1193
+
+01-03 14:56:13.812048   450  9546 D AudioTrack: start(): 0xf4348600, mState = 1
+
+01-03 14:56:13.830239   443   804 D AudioALSAHardwareResourceManager: +startOutputDevice(), new_devices = 0x2, mOutputDevices = 0x0, mStartOutputDevicesCount = 0 SampleRate = 48000
+
+
+
+2018-01-17 周三
+
+/vendor/mediatek/proprietary/hardware/audio/common/V3/aud_drv/AudioALSAGainController.cpp
+void AudioMTKGainController::SetAdcPga1(int gain)
+   -->if (mixer_ctl_set_enum_by_string(ctl, mSpec.ulPgaGainString[gain].c_str())) {
+
+/vendor/mediatek/proprietary/hardware/audio/common/V3/aud_drv/AudioGainTableParamParser.cpp
+status_t GainTableParamParser::loadGainTableSpec() {
+   -->getParamVector(paramUnit, &mSpec.ulPgaGainString, "ul_pga_gain_string");
+
+/device/mediatek/common/audio_param/Volume_AudioParam.xml
+			<Param name="swagc_gain_map" value="25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,16,15,14,13,12,11,16,15,14,13,12,11,16,15,14,13,12,11,16,15,14,13,12,11,10,9,8,7,6,5,4"/>
+			<Param name="swagc_gain_map_dmic" value="28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"/>
+			<Param name="ul_pga_gain_map" value="6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,12,12,12,12,12,12,18,18,18,18,18,18,24,24,24,24,24,24,30,30,30,30,30,30,30,30,30,30,30,30,30"/>
+			<Param name="ul_pga_gain_string" value="0Db,6Db,12Db,18Db,24Db,30Db"/>
+			<Param name="ul_gain_offset" value="2"/>
+			<Param name="ul_pga_gain_map_max" value="30"/>
+			<Param name="ul_hw_pga_max_idx" value="6"/>
+			<Param name="ul_pga_l_mixer_name" value="Audio_PGA1_Setting"/>
+			<Param name="ul_pga_r_mixer_name" value="Audio_PGA2_Setting"/>
+
+/kernel-4.4/sound/soc/mediatek/codec/mt6357/mtk-soc-codec-6357.c
+SOC_ENUM_EXT("Audio_PGA1_Setting", Audio_UL_Enum[9], Audio_PGA1_Get,Audio_PGA1_Set),
+
+static int Audio_PGA1_Set(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+   -->Ana_Set_Reg(AUDENC_ANA_CON0, (index << 8), 0x0700);
+      -->
+
+2018-01-18 周四
+
+01-18 10:48:57.846295   308   308 E AudioHeadSetMessager: open /sys/class/switch/h2w/state error fd = -1
+
+01-18 10:48:57.846413   308   308 W AudioALSAStreamManager: routingOutputDevice(), mPhoneCallSpeechOpen = 0, output_devices == current_output_devices(0x1), return
+
+01-18 10:48:57.851704  3366  3366 W AudioTrack: AUDIO_OUTPUT_FLAG_FAST denied by server; frameCount 1540 -> 1540
+
+01-18 10:48:57.851792  3366  3366 W AudioTrack: Client adjusted notificationFrames from 1024 to 770 for frameCount 1540
+
+java空间按下音量键的操作：
+boolean onKeyDown(int featureId, int keyCode, KeyEvent event)//PhoneWindow.java
+   -->void adjustVolume(int direction, int flags)//MediaController.java
+binder call
+public void onAdjustVolume(int direction)//MediaSession.java
+   -->void dispatchAdjustVolume(int suggestedStream, int direction, int flags)//MediaSessionManager.java
+      -->void dispatchAdjustVolume(int suggestedStream, int delta, int flags)//MediaSessionService.java
+         -->void dispatchAdjustVolumeLocked(int suggestedStream, int direction, int flags)//MediaSessionService.java
+            -->void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags,String callingPackage, String caller)//AudioService.java
+               -->void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags,String callingPackage, String caller, int uid)//AudioService.java
+                  -->void adjustStreamVolume(int streamType, int direction, int flags,String callingPackage, String caller, int uid)
+                     --> sendMsg(MSG_SET_DEVICE_VOLUME)
+
+void setDeviceVolume(VolumeStreamState streamState, int device)
+void applyDeviceVolume_syncVSS(int device)
+public static native int setStreamVolumeIndex(int stream, int index, int device)AudioSystem.java
+--JNI--
+
+2018-01-19 周五
+void sendVolumeUpdate(int streamType, int oldIndex, int index, int flags)
+public void postVolumeChanged(int streamType, int flags)
+public void volumeChanged(int streamType, int flags)
+
+AudioPolicyManager(clientInterface, audiopolicymanagerMTK)
+
+AudioALSACodecDeviceBase
+
+ALPS03734740duo 通话无声
+01-17 05:15:40.813479   216  2865 D AudioTrack: set(): 0xb78f8ff0, streamType 0, sampleRate 16000, format 0x1, channelMask 0x3, frameCount 8162, flags #0, notificationFrames 0, sessionId 67, transferType 0, uid 10047, pid 2325
+
+01-17 05:15:40.816127   216  2865 D AudioTrack: start(): 0xb78f8ff0, mState = 1
+01-17 05:15:40.816187   216  2851 D AudioSPELayer: Process_VoIP, mULInBufQLenTotal=1280, mDLInBufQLenTotal=3060, SPERecBufSize=1280,ULIncopysize=0
+01-17 05:15:40.816554   216  2865 D APM::AudioPolicyManager: StartOutputSamplerate +output = 2 +stream = 0 session = 67 +samplerate=16000 mPrimaryOutput= 2
+
+01-17 05:15:40.816597   216  2865 V APM::AudioPolicyManager: startOutput() output 2, stream 0, session 67
+01-17 05:15:40.924983   216  2865 D AudioTrack: write: 0xb78f8ff0, userSize = 3200, blocking = 0
+来电
+01-17 05:14:54.137368   216  2845 D AudioTrack: set(): 0xb77ef360, streamType 2, sampleRate 16000, format 0x1, channelMask 0x3, frameCount 8162, flags #0, notificationFrames 0, sessionId 62, transferType 0, uid 10047, pid 2325
+
+01-17 05:14:55.286765   216   699 D AudioALSAStreamManager: +setMode(), mAudioMode: 1 => 3
+
+settrack
+01-17 05:14:45.718814  2325  2408 D AudioTrack: set(): 0xb96dc968, streamType -1, sampleRate 44100, format 0x1, channelMask 0x1, frameCount 4104, flags #0, notificationFrames 0, sessionId 0, transferType 3, uid -1, pid -1
+
+01-17 05:14:45.959728   216  2817 D AudioTrack: set(): 0xb79ce010, streamType 2, sampleRate 48000, format 0x1, channelMask 0x3, frameCount 24508, flags #0, notificationFrames 0, sessionId 58, transferType 0, uid 10047, pid 2325
+
+01-17 05:14:54.137368   216  2845 D AudioTrack: set(): 0xb77ef360, streamType 2, sampleRate 16000, format 0x1, channelMask 0x3, frameCount 8162, flags #0, notificationFrames 0, sessionId 62, transferType 0, uid 10047, pid 2325
+
+01-17 05:15:40.813479   216  2865 D AudioTrack: set(): 0xb78f8ff0, streamType 0, sampleRate 16000, format 0x1, channelMask 0x3, frameCount 8162, flags #0, notificationFrames 0, sessionId 67, transferType 0, uid 10047, pid 2325
+
+
+
+————————————stream 0————————————————
+Line 33619: 01-17 05:14:55.245991   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.125893, output 2 delay 0
+Line 78328: 01-17 05:15:42.170806   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.000000, output 2 delay 0
+Line 78360: 01-17 05:15:42.182830   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.031623, output 2 delay 368
+Line 78589: 01-17 05:15:42.391182   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.031623, output 2 delay 0
+Line 78927: 01-17 05:15:42.531981   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.031623, output 4 delay 0
+Line 79001: 01-17 05:15:42.571477   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.031623, output 4 delay 0
+Line 79194: 01-17 05:15:42.615424   216   216 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.251189, output 4 delay 0
+Line 79306: 01-17 05:15:42.634864   216   216 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.125893, output 2 delay 0
+————————————stream 2————————————————
+Line 33268: 01-17 05:14:55.069971   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.000000, output 2 delay 0
+Line 33311: 01-17 05:14:55.082532   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.063096, output 2 delay 92
+Line 33404: 01-17 05:14:55.114250   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.000000, output 4 delay 0
+Line 33470: 01-17 05:14:55.178556   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.063096, output 4 delay 57
+Line 78690: 01-17 05:15:42.442838   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.063096, output 2 delay 0
+Line 79020: 01-17 05:15:42.580417   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 2, volume 0.063096, output 4 delay 0	
+————————————track set————————————————
+
+audio_policy_configuration.xml
+
+2018-01-22 周一	
+
+case ALPS03740659 安装第3方apk都没有声音
+	关闭selinux后仍然无声，等待客户抓取Log。 为SELinux问题，客户已解决
+case ALPS03734740 duo 通话无声
+--响铃开始--
+01-17 05:14:44.426691   216  1852 D AudioALSAStreamManager: +setMode(), mAudioMode: 0 => 1
+01-17 05:14:45.884596   216   688 D AudioALSAHardwareResourceManager: +startOutputDevice(), new_devices = 0x2, mOutputDevices = 0x0, mStartOutputDevicesCount = 0 SampleRate = 44100
+01-17 05:14:45.959728   216  2817 D AudioTrack: set(): 0xb79ce010, streamType 2, sampleRate 48000, format 0x1, channelMask 0x3, frameCount 24508, flags #0, notificationFrames 0, sessionId 58, transferType 0, uid 10047, pid 2325
+01-17 05:14:45.962507   216  2817 D AudioTrack: start(): 0xb79ce010, mState = 1
+--
+01-17 05:14:55.245922   216   699 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 2 change 1 volume -18.000000 stream 0 device 0x2 delayMs 0 force 0
+
+01-17 05:14:55.245991   216   699 V AudioPolicyService: AudioCommandThread() adding set volume stream 0, volume 0.125893, output 2 delay 0
+AudioTrack: write: 0xb96dc968, userSize = 882, blocking = 1
+--通话开始--
+01-17 05:14:55.245922   216   699 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 2 change 1 volume -18.000000 stream 0 device 0x2 delayMs 0 force 0
+01-17 05:14:55.246579   216   699 D APM::AudioPolicyManager: checkAndSetVolume stream = 0 index = 3 mId = 3 device = 0x2 delayMs = 0 force = 0 [983047/0xf0008/983047]
+01-17 05:14:55.286765   216   699 D AudioALSAStreamManager: +setMode(), mAudioMode: 1 => 3 //AUDIO_MODE_IN_COMMUNICATION = 3,
+01-17 05:14:55.305290   216   699 D AudioALSAStreamOut: close(), flags 2
+01-17 05:14:55.305748   216   699 D AudioALSAHardwareResourceManager: CloseSpeakerPath(), AUDIO_DEVICE_OUT_SPEAKER
+01-17 05:14:55.461588   216   699 D AudioALSAVolumeController: ApplyAmpGain  Gain = 256 mode= 3 device = 15
+
+01-17 05:14:55.461628   216   699 D AudioALSAVolumeController: SetLSpeakerGain,DegradedBGain=13 
+01-17 05:14:55.610241   216   688 D AudioALSAHardwareResourceManager: -startOutputDevice(), mOutputDevices = 0x2, mStartOutputDevicesCount = 1
+01-17 05:14:55.987206   216  2835 D AudioALSAHardwareResourceManager: +startInputDevice(), new_device = 0x80000004, mInputDevice = 0x0, mStartInputDeviceCount = 0
+--通话结束--
+01-17 05:15:42.644597   216   216 D AudioALSAStreamManager: +setMode(), mAudioMode: 3 => 0
+
+2018-01-23 周二
+case ALPS03738800 合入音频参数后，出现无声现象
+	先通话，后播音乐，user版本必现无声。抓一下两种场景的Log，等待反馈中。
+	下午送机器过来，封版中，优先处理。
+	
+case ALPS03736152 免提声音小
+	修改模拟增益无效，请先将音量调到最大，然后进行通话并切换为免提模式，抓取mtklog和免提通话场景下的寄存器。等待反馈中。
+	抓取的log中没有mobilelog
+	提交了新的log，正在分析中。
+--通话开始--
+01-06 19:54:16.728955   452   759 D AudioALSAStreamManager: +setMode(), mAudioMode: 0 => 2, mPhoneCallControllerStatus = 0 , mPhoneWithVoip : 0 , mVoipToRingTone : 0
+01-06 19:54:16.978229   452   759 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 13 id 3 change 0 volume 0.000000 stream 0 device 0x2 delayMs 0 force 0
+01-06 19:54:16.980423   452   731 D AudioMTKGainController: setVoiceVolume index 7, devices 0x2, mode 2, mBand 1, mNetwork 0
+
+01-06 19:54:16.981113   452   731 D AudioMTKGainController: setSpeakerGain(), gain 9, mHwVolume.speaker 9
+01-06 19:55:04.790044  1209 20439 D AudioTrack: set(): 0x7af7053300, streamType 0, sampleRate 44100, format 0x1, channelMask 0x1, frameCount 882, flags #4, notificationFrames 0, sessionId 0, transferType 1, uid -1, pid -1
+
+01-06 19:54:16.981016   452   731 D AudioMTKGainController: setSpeakerGain(), gain = 9, spkAnaType = 3, spkLMixerName = Lineout_PGAL_GAIN, spkRMixerName = Lineout_PGAR_GAIN
+
+01-06 19:54:16.981113   452   731 D AudioMTKGainController: setSpeakerGain(), gain 9, mHwVolume.speaker 9
+
+01-06 19:54:16.981207   452   731 D AudioMTKGainController: SetSpeakerGain,index=9 
+--通话结束--
+01-06 19:55:05.951720   452   761 D AudioALSAStreamManager: +setMode(), mAudioMode: 2 => 0
+	修改xml，等待反馈中。
+case ALPS03744479 [T725][speaker]二合一的喇叭声音小
+	1.将音量调到最大，播放音乐，抓取mtklog。等待反馈中。
+case ALPS03734740 duo 通话无声
+	从log上看，设置通路跟增益正常，模拟增益比较小但是不至于没有声音。为便于分析，请将音量调到最大后用duo进行一次通话操作（包括来电铃声播放和语音通话），
+	期间不要调节音量。抓取mtklog、audiodump和寄存器（来电铃声播放场景和通话场景。）等待反馈中
+case ALPS03717937 Flyme Bug管理 #583580 [用户反馈四星]【本地未复现】【Flyme6】【M80】【音频】升级安卓N通话声音变小
+	log上看两种case增益设置相同，请查验Volume_AudioParam.xml是否一致。长时间不回复。
+	客户反馈用户不跟进，关闭case。 
+
+音频参数路劲：/system/vendor/etc/audio_param文件夹 /sdcard/.audio_param/文件夹
+
+2018-01-24 周三
+
+case ALPS03744479 [T725][speaker]二合一的喇叭声音小
+	1.将音量调到最大，播放音乐，抓取mtklog。等待反馈中。
+--播放开始--
+01-01 00:28:11.585549   254  3043 D AudioTrack: set(): 0xb73ad298, streamType 3, sampleRate 44100, format 0x1, channelMask 0x3, frameCount 22528, flags #8, notificationFrames 0, sessionId 17, transferType 0, uid 10047, pid 2974
+
+01-01 00:28:11.590179   254  3043 D AudioTrack: start(): 0xb73ad298, mState = 1
+01-01 00:28:11.672981   254   717 D AudioALSAVolumeController: AudioALSAVolumeController getMasterVolume
+01-01 00:28:11.673157   254   717 D AudioALSAStreamManager: setMasterVolume(), volume = 0.251189
+
+01-01 00:28:11.673238   254   717 D AudioALSAVolumeController: AudioALSAVolumeController setMasterVolume v = 0.251189 mode = 0 devices = 0x2
+01-01 00:28:11.674327   254   717 D AudioALSAVolumeController: SetLSpeakerGain,DegradedBGain=21 
+01-01 00:28:11.674404   254   717 D AudioALSAVolumeController: index=15, SetRealLSpeakerGain = 14
+01-01 00:28:29.976063   254   958 D APM::AudioPolicyManager: checkAndSetVolume stream = 3 index = 15 mId = 4 device = 0x2 delayMs = 0 force = 0
+01-01 00:28:29.976388   254   958 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 4 change 1 volume -1.000000 stream 3 device 0x2 delayMs 0 force 0
+	模拟增益设置不正常，等待客户自查修改。
+case ALPS03738800 合入音频参数后，出现无声现象
+	先通话，后播音乐，user版本必现无声。抓一下两种场景的Log，等待反馈中。
+	下午送机器过来，封版中，优先处理。
+	客户定位为三方算法问题。
+case ALPS03736152 免提声音小
+	修改xml，Speaker通话场景下的模拟增益，等待反馈中。
+	修改生效，
+case ALPS03734740 duo 通话无声
+	无反馈
+case ALPS03715070 [Android O][A3A][Audio tuning tool] 用 Audio tuning tool 进行 voice DMNR 校准出错
+	等待寄新机器过来
+case ALPS03697730 【L05A】【5058A外场测试_上海_通话】偶现来电无声无振动
+	无反馈
+
+.h中160转换为index的过程。
+
+2018-01-25 周四
+准备尾牙，中了大奖电视机，好开心。
+
+2018-01-26 周五
+case ALPS03744479 [T725][speaker]二合一的喇叭声音小
+	1.将音量调到最大，播放音乐，抓取mtklog。等待反馈中。
+--播放开始--
+01-01 00:28:11.585549   254  3043 D AudioTrack: set(): 0xb73ad298, streamType 3, sampleRate 44100, format 0x1, channelMask 0x3, frameCount 22528, flags #8, notificationFrames 0, sessionId 17, transferType 0, uid 10047, pid 2974
+
+01-01 00:28:11.590179   254  3043 D AudioTrack: start(): 0xb73ad298, mState = 1
+01-01 00:28:11.672981   254   717 D AudioALSAVolumeController: AudioALSAVolumeController getMasterVolume
+01-01 00:28:11.673157   254   717 D AudioALSAStreamManager: setMasterVolume(), volume = 0.251189
+
+01-01 00:28:11.673238   254   717 D AudioALSAVolumeController: AudioALSAVolumeController setMasterVolume v = 0.251189 mode = 0 devices = 0x2
+01-01 00:28:11.674327   254   717 D AudioALSAVolumeController: SetLSpeakerGain,DegradedBGain=21 
+01-01 00:28:11.674404   254   717 D AudioALSAVolumeController: index=15, SetRealLSpeakerGain = 14
+01-01 00:28:29.976063   254   958 D APM::AudioPolicyManager: checkAndSetVolume stream = 3 index = 15 mId = 4 device = 0x2 delayMs = 0 force = 0
+01-01 00:28:29.976388   254   958 D APM::AudioOutputDescriptor: SwAudioOutputDescriptor::setVolume mIoHandle 4 change 1 volume -1.000000 stream 3 device 0x2 delayMs 0 force 0
+	模拟增益设置不正常，等待客户自查修改。
+
+
+
+masterVolume来源
+	：AudioALSAVolumeController::AudioALSAVolumeController()构造时初始化
+		mVoiceVolume = 1.0f;
+		mMasterVolume = 1.0f;
+2018-01-29 周一
+.h mapping 机制
+
+status_t AudioALSAVolumeController::initVolumeController()
+   -->GetVolumeVer1ParamFromNV(&mVolumeParam);//从NV中得到音量参数AUDIO_VER1_CUSTOM_VOLUME_STRUCT
+   -->#ifdef USING_EXTAMP_HP
+   -->    degradegain = (unsigned char)MampAudioBufferVolume(mVolumeParam.speakeraudiovolume[SPEAKER_AMP]);
+   -->#else
+   -->    degradegain = (unsigned char)MampSPKAMPVolume(mVolumeParam.speakeraudiovolume[SPEAKER_AMP]);//mVolumeParam.speakeraudiovolume[SPEAKER_AMP]对应于头文件audio_ver1_volume_custom_default.h中的160
+      -->AMP_VOLUME_MAX
+   -->#endif
+   -->    SetVolumeRange(Audio_Speaker, DEVICE_AMP_MAX_VOLUME  , DEVICE_AMP_MIN_VOLUME, degradegain);
+   -->    bool AudioALSAVolumeController::SetVolumeRange(uint32_t mode, int32_t MaxVolume, int32_t MinVolume, int32_t VolumeRange)
+      -->mVolumeRange[mode] = VolumeRange;//
+
+Q1.音量调节后，AudioService根据什么获取要调整音量的设备？
+A：在AudioService.java 
+   private void adjustStreamVolume(int streamType, int direction, int flags,
+
+            String callingPackage, String caller, int uid) {
+        int streamTypeAlias = mStreamVolumeAlias[streamType];
+        final int device = getDeviceForStream(streamTypeAlias);
+}
+int getDeviceForStream(int stream)
+   -->int getDevicesForStream(int stream)
+      -->int getDevicesForStream(int stream, boolean checkOthers)
+         -->int observeDevicesForStream_syncVSS(boolean checkOthers)
+--JNI--
+            -->audio_devices_t AudioSystem::getDevicesForStream(audio_stream_type_t stream)
+--BinderCall--
+               -->audio_devices_t AudioPolicyService::getDevicesForStream(audio_stream_type_t stream)
+                  -->audio_devices_t AudioPolicyManager::getDevicesForStream(audio_stream_type_t stream)
+                     -->audio_devices_t AudioPolicyManager::getDevicesForStream(audio_stream_type_t stream)
+                     -->audio_devices_t curDevices =getDeviceForStrategy((routing_strategy)curStrategy, false /*fromCache*/);
+
+Q2.SwAudioOutputDescriptor::setVolume里面的逻辑？
+在改变音量时如果stream为AUDIO_STREAM_BLUETOOTH_SCO会强制将这个音量同时设置给AUDIO_STREAM_VOICE_CALL
+
+Q3.不同的device对应不用stream是否用同一个模拟增益？
+
+
+
+if (BufferVectorSize > 1) {
+                bHasdata = true;
+这里是通过BufferVectorSize和bHasdata来控制线程循环的逻辑，正常情况下这个线程应该是不会退出的。
+只要mAudioDumpFileVector.valueAt(i)里面有数据就进行if{}的操作，相当于会监听mAudioDumpFileVector。
+程序通过给mAudioDumpFileVector赋值来控制是否执行dump。
+这样是比较节约资源的做法，如果每次都让线程退出然后需要的时候在新建线程在操作频率比较高的时候会特别耗费资源，一般都是会这样做。
+除非是一次性的工作，或者不经常需要做的工作才会做完就退出然后下次再起个新线程。
+
+2018-01-30 周二
+Q3.不同的device对应不用stream是否用同一个模拟增益？
+status_t AudioMTKGainController::setNormalVolume(int stream, int index, int devices, audio_mode_t mode)
+    if (isSpeakerCategory(gainDevice)) {
+        if (mSpec.spkAnaType >= 0 && mSpec.spkAnaType < NUM_GAIN_ANA_TYPE) {
+            unsigned char gain = mGainTable.sceneGain[mSceneIndex].streamGain[stream][gainDevice][index].analog[mSpec.spkAnaType];
+            setSpeakerGain(gain);
+        }
+    }
+Q4.在哪里修改xml路径？
+deploy：
+AUDIO_PARAM_OUT_DIR := $(TARGET_OUT_VENDOR_ETC)/audio_param
+TARGET_OUT_VENDOR_ETC := $(TARGET_OUT_VENDOR)/etc
+TARGET_OUT_VENDOR := $(PRODUCT_OUT)/$(TARGET_COPY_OUT_VENDOR)
+TARGET_COPY_OUT_VENDOR := system/vendor
+因此：
+AUDIO_PARAM_OUT_DIR := $(PRODUCT_OUT)/system/vendor/etc/audio_param
+其中PRODUCT_OUT为project build完成后的输出路径，烧到手机中以后为手机 adb shell后的一级目录。
+upload Dir
+appHandleParseXml(&appHandleInst, XML_FOLDER_LIST_ON_DEVICE, XML_CUS_FOLDER_ON_DEVICE);
+static const char *XML_FOLDER_LIST_ON_DEVICE[] = {
+    "/odm/etc/audio_param/",
+    "/vendor/etc/audio_param/",
+    "/system/etc/audio_param/",
+    NULL
+};
+#define XML_CUS_FOLDER_ON_DEVICE        "/data/vendor/audiohal/audio_param/"
+#define XML_CUS_FOLDER_ON_DEVICE        "/sdcard/.audio_param/"
